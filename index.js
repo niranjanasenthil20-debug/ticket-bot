@@ -2,18 +2,15 @@ require("dotenv").config();
 const { chromium } = require("playwright");
 const TelegramBot = require("node-telegram-bot-api");
 
-// Initialize bot
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 
-// Store users and their links
-// { chatId: Set(urls) }
-let users = {};
+// Store users
+let users = {}; // { chatId: Set(urls) }
 
-// Prevent duplicate alerts per user+url
-// { "chatId_url": true/false }
-let alerted = {};
+// Track alert status
+let alerted = {}; // { "chatId_url": true/false }
 
-// START command
+// START
 bot.onText(/\/start/, (msg) => {
     bot.sendMessage(
         msg.chat.id,
@@ -21,7 +18,7 @@ bot.onText(/\/start/, (msg) => {
     );
 });
 
-// ADD command
+// ADD
 bot.onText(/\/add (.+)/, (msg, match) => {
     const chatId = msg.chat.id;
     const url = match[1];
@@ -36,7 +33,7 @@ bot.onText(/\/add (.+)/, (msg, match) => {
     bot.sendMessage(chatId, "✅ Tracking started!");
 });
 
-// LIST command
+// LIST
 bot.onText(/\/list/, (msg) => {
     const list = users[msg.chat.id];
 
@@ -44,10 +41,10 @@ bot.onText(/\/list/, (msg) => {
         return bot.sendMessage(msg.chat.id, "No shows tracked.");
     }
 
-    bot.sendMessage(msg.chat.id, "🎬 Your shows:\n" + [...list].join("\n"));
+    bot.sendMessage(msg.chat.id, [...list].join("\n"));
 });
 
-// REMOVE ALL command
+// REMOVE ALL
 bot.onText(/\/remove/, (msg) => {
     users[msg.chat.id] = new Set();
     bot.sendMessage(msg.chat.id, "🗑 All shows removed.");
@@ -68,23 +65,39 @@ async function run() {
                     await page.goto(url, { waitUntil: "domcontentloaded" });
                     await page.waitForTimeout(4000);
 
-                    // Check if "Sold Out" text exists
                     const soldOut = await page.locator("text=Sold Out").count();
                     const isAvailable = soldOut === 0;
 
                     const key = chatId + "_" + url;
 
-                    // Send alert only once per availability
                     if (isAvailable && !alerted[key]) {
+
+                        // 🚨 FIRST ALERT
                         bot.sendMessage(
                             chatId,
-                            "🎟 Tickets available!\n" + url
+                            "🚨🎟 TICKETS OPEN NOW!\n" + url
                         );
+
+                        // 🔁 REMINDER AFTER 30 SECONDS
+                        setTimeout(() => {
+                            bot.sendMessage(
+                                chatId,
+                                "⏰ Reminder: Tickets still available!\n" + url
+                            );
+                        }, 30000);
+
+                        // 🔁 REMINDER AFTER 1 MINUTE
+                        setTimeout(() => {
+                            bot.sendMessage(
+                                chatId,
+                                "⚡ Hurry! Tickets may sell out soon!\n" + url
+                            );
+                        }, 60000);
 
                         alerted[key] = true;
                     }
 
-                    // Reset alert if tickets go back to sold out
+                    // Reset if sold out again (so future alerts work)
                     if (!isAvailable) {
                         alerted[key] = false;
                     }
@@ -94,7 +107,7 @@ async function run() {
                 }
             }
         }
-    }, 45000); // check every 45 seconds
+    }, 30000); // check every 30 seconds
 }
 
 run();
