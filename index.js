@@ -2,26 +2,26 @@ require("dotenv").config();
 const { chromium } = require("playwright");
 const TelegramBot = require("node-telegram-bot-api");
 
+// Initialize bot
 const bot = new TelegramBot(process.env.BOT_TOKEN, { polling: true });
 
+// Store users and their links
 // { chatId: Set(urls) }
 let users = {};
 
-// { url: "available" / "sold_out" }
-let lastStatus = {};
-
-// { chatId+url: true }
+// Prevent duplicate alerts per user+url
+// { "chatId_url": true/false }
 let alerted = {};
 
-// Start
+// START command
 bot.onText(/\/start/, (msg) => {
     bot.sendMessage(
         msg.chat.id,
-        "👋 Welcome!\n\nUse:\n/add <BookMyShow link>\n/list\n/remove"
+        "👋 Welcome!\n\nCommands:\n/add <BookMyShow link>\n/list\n/remove"
     );
 });
 
-// Add movie
+// ADD command
 bot.onText(/\/add (.+)/, (msg, match) => {
     const chatId = msg.chat.id;
     const url = match[1];
@@ -33,11 +33,10 @@ bot.onText(/\/add (.+)/, (msg, match) => {
     }
 
     users[chatId].add(url);
-
     bot.sendMessage(chatId, "✅ Tracking started!");
 });
 
-// List movies
+// LIST command
 bot.onText(/\/list/, (msg) => {
     const list = users[msg.chat.id];
 
@@ -45,21 +44,21 @@ bot.onText(/\/list/, (msg) => {
         return bot.sendMessage(msg.chat.id, "No shows tracked.");
     }
 
-    bot.sendMessage(msg.chat.id, [...list].join("\n"));
+    bot.sendMessage(msg.chat.id, "🎬 Your shows:\n" + [...list].join("\n"));
 });
 
-// Remove all (simple version)
+// REMOVE ALL command
 bot.onText(/\/remove/, (msg) => {
     users[msg.chat.id] = new Set();
     bot.sendMessage(msg.chat.id, "🗑 All shows removed.");
 });
 
-// Checker
+// MAIN CHECKER
 async function run() {
-    const browser = await chromium.launch();
+    const browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
 
-    console.log("Bot running...");
+    console.log("🚀 Bot running...");
 
     setInterval(async () => {
         for (const chatId in users) {
@@ -69,27 +68,33 @@ async function run() {
                     await page.goto(url, { waitUntil: "domcontentloaded" });
                     await page.waitForTimeout(4000);
 
+                    // Check if "Sold Out" text exists
                     const soldOut = await page.locator("text=Sold Out").count();
-                    const current = soldOut > 0 ? "sold_out" : "available";
+                    const isAvailable = soldOut === 0;
 
-                    const key = chatId + url;
+                    const key = chatId + "_" + url;
 
-                    if (
-                        current === "available" &&
-                        !alerted[key]
-                    ) {
-                        bot.sendMessage(chatId, "🎟 Tickets available!\n" + url);
+                    // Send alert only once per availability
+                    if (isAvailable && !alerted[key]) {
+                        bot.sendMessage(
+                            chatId,
+                            "🎟 Tickets available!\n" + url
+                        );
+
                         alerted[key] = true;
                     }
 
-                    lastStatus[url] = current;
+                    // Reset alert if tickets go back to sold out
+                    if (!isAvailable) {
+                        alerted[key] = false;
+                    }
 
-                } catch (e) {
-                    console.log("Error:", e.message);
+                } catch (err) {
+                    console.log("Error:", err.message);
                 }
             }
         }
-    }, 45000);
+    }, 45000); // check every 45 seconds
 }
 
 run();
